@@ -592,11 +592,20 @@ class ConstantLengthDataset(IterableDataset):
                 if len(input_ids) == self.seq_length:
                     examples.append(input_ids)
                     # Compute the correct packed attn mask
+                    # Start by computing the correct lengths for the masks of this example
                     mask_lens = []
+                    start_mask_iter = masking_iter
                     while masking_idxs[masking_iter] < i + self.seq_length:
-                        mask_lens.append(masking_idxs[masking_iter+1] - masking_idxs[masking_iter])
+                        mask_lens.append(min(masking_idxs[masking_iter+1], i + self.seq_length) - masking_idxs[masking_iter])
                         masking_iter += 1
-                    attn_masks.append(torch.cat([torch.tril(torch.ones((mask_len, self.seq_length), dtype=torch.bool)) for mask_len in mask_lens], dim=0).unsqueeze(1))
+                    local_masks = []
+                    for j, mask_len in enumerate(mask_lens):
+                        # 1. Construct the attention mask for the sequence
+                        mask = torch.tril(torch.ones((mask_len, self.seq_length), dtype=torch.bool))
+                        # 2. Roll the attention mask to the correct position on the kv-axis
+                        mask = torch.roll(mask, masking_idxs[j] - masking_idxs[start_mask_iter], 1)
+                        local_masks.append(mask)
+                    attn_masks.append(torch.cat(local_masks, dim=0).unsqueeze(0).unsqueeze(0)) # 1 1 s s
             if self.shuffle:
                 random.shuffle(examples)
             for i, example in range(examples):
