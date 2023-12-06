@@ -580,20 +580,31 @@ class ConstantLengthDataset(IterableDataset):
                         break
             tokenized_inputs = self.tokenizer(buffer, truncation=False)["input_ids"]
             all_token_ids = []
+            masking_idxs = [0]
             for tokenized_input in tokenized_inputs:
                 all_token_ids.extend(tokenized_input + [self.concat_token_id])
+                masking_idxs.append(len(all_token_ids))
             examples = []
+            attn_masks = []
+            masking_iter = 0
             for i in range(0, len(all_token_ids), self.seq_length):
                 input_ids = all_token_ids[i : i + self.seq_length]
                 if len(input_ids) == self.seq_length:
                     examples.append(input_ids)
+                    # Compute the correct packed attn mask
+                    mask_lens = []
+                    while masking_idxs[masking_iter] < i + self.seq_length:
+                        mask_lens.append(masking_idxs[masking_iter+1] - masking_idxs[masking_iter])
+                        masking_iter += 1
+                    attn_masks.append(torch.cat([torch.tril(torch.ones((mask_len, self.seq_length), dtype=torch.bool)) for mask_len in mask_lens], dim=0).unsqueeze(1))
             if self.shuffle:
                 random.shuffle(examples)
-            for example in examples:
+            for i, example in range(examples):
                 self.current_size += 1
                 yield {
                     "input_ids": torch.LongTensor(example),
                     "labels": torch.LongTensor(example),
+                    "attention_mask": attn_masks[i]
                 }
 
 
